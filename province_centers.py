@@ -4,18 +4,21 @@ import sys
 from collections import defaultdict
 import json
 
+
 def wrap(value, max):
     return value % max
 
-def get_center(points):
-    x = round(statistics.mean(i[0] for i in points))
-    y  = round(statistics.mean(i[1] for i in points))
 
-    return (x, y)
+def get_center(points):
+    return (
+        round(statistics.mean(i[0] for i in points)),
+        round(statistics.mean(i[1] for i in points))
+    )
+
 
 def main():
     if len(sys.argv) != 2 and len(sys.argv) != 3:
-        print("Usage: province_center.py" + __file__ + " input [output]")
+        print("Usage: " + __file__ + " input [output]")
         return
 
     image = Image.open(sys.argv[1]).convert("RGB")
@@ -25,9 +28,9 @@ def main():
 
     width, height = image.size
 
-    color_positions = defaultdict(list)
-
     BLACK = (0, 0, 0)
+
+    color_positions = defaultdict(list)
 
     for y in range(height):
         for x in range(width):
@@ -36,21 +39,21 @@ def main():
                 continue
             color_positions[c].append((x, y))
 
-    centers = {}
+    json_out = {}
     for color, positions in color_positions.items():
-        centers[str(color)] = list(get_center(positions))
+        json_out[str(color)] = list(get_center(positions))
 
-    outpath = ""
     if len(sys.argv) == 3:
-        outpath = sys.argv[2]
+        path_out = sys.argv[2]
     else:
-        outpath = "province_centers.json"
+        path_out = "province_centers.json"
 
-    output = json.dumps(centers)
-    with open(outpath, "w") as f:
+    output = json.dumps(json_out)
+    with open(path_out, "w") as f:
         f.write(output)
 
-    print("Saved json to", outpath)
+    print("Saved json to", path_out)
+
 
 if __name__ == "__main__":
     main()
