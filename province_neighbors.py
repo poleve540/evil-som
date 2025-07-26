@@ -1,9 +1,56 @@
+#!/usr/bin/python
+
 from PIL import Image
 import json
-import sys
+import struct
+import argparse
 
 
-def get_neighboring_colors(pixels, x, y):
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("image", type=str)
+    parser.add_argument("--outpath", default="province_neighbors.json", type=str)
+    args = parser.parse_args()
+
+    image = Image.open(args.image).convert("RGB")
+    pixels = image.load()
+    if not pixels:
+        return
+
+    width, height = image.size
+
+    BLACK = (0, 0, 0)
+
+    color_neighbors = {}
+    for y in range(height):
+        for x in range(width):
+            if pixels[x, y] != BLACK:
+                continue
+
+            neighboring_colors = get_neighboring_colors8(pixels, x, y)
+            neighboring_colors.discard(BLACK)
+
+            for color in neighboring_colors:
+                color_neighbors.setdefault(color, set())
+                for n_color in neighboring_colors:
+                    if n_color == color:
+                        continue
+                    color_neighbors[color].add(n_color)
+
+    json_out = {}
+    for color, neighbors in color_neighbors.items():
+        rgba = color + (0,)
+        packed = struct.pack("<4B", *rgba)
+        i = int.from_bytes(packed, byteorder="little", signed=False)
+        json_out[i] = list(neighbors)
+
+    with open(args.outpath, "w") as f:
+        json.dump(json_out, f, indent=2)
+
+    print("Wrote output to:", args.outpath)
+
+
+def get_neighboring_colors8(pixels, x, y):
     neighbors = set()
     for i in range(-1, 2):
         for j in range(-1, 2):
@@ -19,51 +66,5 @@ def get_neighboring_colors(pixels, x, y):
     return neighbors
 
 
-def main():
-    if len(sys.argv) != 2 and len(sys.argv) != 3:
-        print("Usage: " + __file__ + " input [output]")
-        return
-
-    image = Image.open(sys.argv[1]).convert("RGB")
-    pixels = image.load()
-    if not pixels:
-        return
-
-    width, height = image.size
-
-    BLACK = (0,0,0)
-
-    # TODO(pol): Could update an existing json for speed
-    regions_neighbors: dict[tuple[int, int, int], set[tuple[int, int, int]]] = {}
-    for y in range(height):
-        for x in range(width):
-            if pixels[x, y] != BLACK:
-                continue
-
-            neighboring_colors = get_neighboring_colors(pixels, x, y)
-            neighboring_colors.discard(BLACK)
-            for region in neighboring_colors:
-                regions_neighbors.setdefault(region, set())
-                for n_region in neighboring_colors:
-                    if  n_region == region:
-                        continue
-                    regions_neighbors[region].add(n_region)
-
-    json_out = {}
-    for key, value in regions_neighbors.items():
-      json_out[str(key)] = list(value)
-
-    path_out = ""
-    if len(sys.argv) == 3:
-        path_out = sys.argv[2]
-    else:
-        path_out = "province_neighbors.json"
-
-    with open(path_out, "w") as f:
-        json.dump(json_out, f)
-
-    print("Wrote output to:", path_out)
-
-
-if __name__  == "__main__":
+if __name__ == "__main__":
     main()

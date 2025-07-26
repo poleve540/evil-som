@@ -1,8 +1,48 @@
+#!/usr/bin/python
+
 from PIL import Image
-import statistics
-import sys
-from collections import defaultdict
 import json
+import struct
+import argparse
+
+from collections import defaultdict
+import statistics
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("image", type=str)
+    parser.add_argument("--outpath", default="province_centers.json", type=str)
+    args = parser.parse_args()
+
+    image = Image.open(args.outpath).convert("RGB")
+    pixels = image.load()
+    if not pixels:
+        return
+
+    width, height = image.size
+
+    BLACK = (0, 0, 0)
+
+    color_positions = defaultdict(list)
+    for y in range(height):
+        for x in range(width):
+            c = pixels[x, y]
+            if c == BLACK:
+                continue
+            color_positions[c].append((x, y))
+
+    json_out = {}
+    for color, positions in color_positions.items():
+        rgba = color + (0,)
+        packed = struct.pack('<4B', *rgba)
+        i = int.from_bytes(packed, byteorder='little', signed=False)
+        json_out[i] = list(get_center(positions))
+
+    with open(args.outpath, "w") as f:
+        json.dump(json_out, f, indent=2)
+
+    print("Wrote output to:", args.outpath)
 
 
 def wrap(value, max):
@@ -16,44 +56,6 @@ def get_center(points):
     )
 
 
-def main():
-    if len(sys.argv) != 2 and len(sys.argv) != 3:
-        print("Usage: " + __file__ + " input [output]")
-        return
-
-    image = Image.open(sys.argv[1]).convert("RGB")
-    pixels = image.load()
-    if not pixels:
-        return
-
-    width, height = image.size
-
-    BLACK = (0, 0, 0)
-
-    color_positions = defaultdict(list)
-
-    for y in range(height):
-        for x in range(width):
-            c = pixels[x, y]
-            if c == BLACK:
-                continue
-            color_positions[c].append((x, y))
-
-    json_out = {}
-    for color, positions in color_positions.items():
-        json_out[str(color)] = list(get_center(positions))
-
-    if len(sys.argv) == 3:
-        path_out = sys.argv[2]
-    else:
-        path_out = "province_centers.json"
-
-    output = json.dumps(json_out)
-    with open(path_out, "w") as f:
-        f.write(output)
-
-    print("Saved json to", path_out)
-
-
 if __name__ == "__main__":
     main()
+
