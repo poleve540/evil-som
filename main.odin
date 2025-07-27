@@ -27,6 +27,12 @@ som_Rect :: struct
 	size: [2]f32
 }
 
+som_Timer :: struct
+{
+	start_time: f32,
+	time_left: f32
+}
+
 main :: proc()
 {
 	window: ^sdl3.Window
@@ -50,8 +56,8 @@ main :: proc()
 	sdl3.SetRenderVSync(renderer, 1)
 
 	map_surface := image.Load("map.png")
-	tex := sdl3.CreateTextureFromSurface(renderer, map_surface)
-	sdl3.SetTextureScaleMode(tex, .NEAREST)
+	map_tex := sdl3.CreateTextureFromSurface(renderer, map_surface)
+	sdl3.SetTextureScaleMode(map_tex, .NEAREST)
 
 	provinces := image.Load("provinces.png")
 
@@ -77,7 +83,10 @@ main :: proc()
 	}
 
 	DIVISION_SIZE :: [2]f32{10, 10}
-	division_pos: [2]f32
+	division_pos := [2]f32{}
+	division_timer := som_Timer{start_time = 1.0}
+	// List of nodes the division must traverse
+	division_path := [dynamic]string{}
 
 	event: sdl3.Event
 	for global_run
@@ -135,19 +144,20 @@ main :: proc()
 			cam.zoom = clamp(cam.zoom, 1, 10)
 		}
 
-		// NOTE(pol): normalized_pos beyond [0, 1] will be useful when tiling the map
 		exit: if mouse_left_just_pressed
 		{
+			// TODO(pol): Wrap it in a function
 			world_mouse_pos := vec2_screen_to_world(mouse_pos, &cam)
 			surface_size := [2]f32{f32(map_surface.w), f32(map_surface.h)}
 			pixel_pos := (world_mouse_pos - map_rect.pos) / map_rect.size * surface_size
 			pixel_pos.x = math.wrap(pixel_pos.x, f32(map_surface.w))
 			pixel_pos.y = math.wrap(pixel_pos.y, f32(map_surface.h))
-
 			pixel, ok1 := get_surface_packed_rgb(provinces, {i32(pixel_pos.x), i32(pixel_pos.y)})
-			if !ok1 || pixel == 0 do break exit
 
+			if !ok1 || pixel == 0 do break exit
 			rgb_string := fmt.aprint(pixel)
+			defer delete(rgb_string)
+
 			center, ok2 := centers_json.(json.Object)[rgb_string]
 			if !ok2
 			{
@@ -168,30 +178,38 @@ main :: proc()
 			}
 		}
 
-		sdl3.SetRenderDrawColor(renderer, 255, 255, 255, sdl3.ALPHA_OPAQUE)
-		sdl3.RenderClear(renderer)
-
-		// TODO(pol): Have the map's FRect, texture and surfaces together
-		map_screen_rect := rect_world_to_screen(map_rect, &cam)
-
-		rect_floor :: proc(rect: som_Rect) -> som_Rect
-		{
-			rect := rect
-			rect.pos = linalg.floor(rect.pos)
-			rect.size = linalg.floor(rect.size)
-
-			return rect
-		}
-
-		map_screen_rect = rect_floor(map_screen_rect)
-		sdl3.RenderTexture(renderer, tex, nil, (^sdl3.FRect)(&map_screen_rect))
-
-		// World position to screen
-		division_screen_rect := rect_world_to_screen({division_pos, DIVISION_SIZE}, &cam)
-		sdl3.RenderFillRect(renderer, (^sdl3.FRect)(&division_screen_rect))
+		render_game(renderer, &cam, map_rect, map_tex, {division_pos, DIVISION_SIZE})
 
 		sdl3.RenderPresent(renderer)
 	}
+}
+
+render_game :: proc(renderer: ^sdl3.Renderer, cam: ^som_Camera, map_rect: som_Rect, map_tex: ^sdl3.Texture, division_rect: som_Rect)
+{
+	sdl3.SetRenderDrawColor(renderer, 255, 255, 255, sdl3.ALPHA_OPAQUE)
+	sdl3.RenderClear(renderer)
+
+	// TODO(pol): Have the map's FRect, texture and surfaces together
+	map_screen_rect := rect_world_to_screen(map_rect, cam)
+	fmt.println(map_screen_rect)
+	fmt.println(cam.zoom)
+
+	rect_floor :: proc(rect: som_Rect) -> som_Rect
+	{
+		rect := rect
+		rect.pos = linalg.floor(rect.pos)
+		rect.size = linalg.floor(rect.size)
+
+		return rect
+	}
+
+	// map_screen_rect = rect_floor(map_screen_rect)
+	// TODO(pol): Should be tiled using sdl3.RenderTextureTiled
+	sdl3.RenderTexture(renderer, map_tex, nil, (^sdl3.FRect)(&map_screen_rect))
+
+	// World position to screen
+	division_screen_rect := rect_world_to_screen(division_rect, cam)
+	sdl3.RenderFillRect(renderer, (^sdl3.FRect)(&division_screen_rect))
 }
 
 vec2_screen_to_world :: proc(vec2: [2]f32, cam: ^som_Camera) -> [2]f32
@@ -254,24 +272,24 @@ get_surface_packed_rgb :: proc(surface: ^sdl3.Surface, pixel_pos: [2]i32) -> (re
 	return
 }
 
-	load_json_from_file :: proc(file: string) -> (root: json.Value, ok: bool)
+load_json_from_file :: proc(file: string) -> (root: json.Value, ok: bool)
+{
+	data, ok1 := os.read_entire_file_from_filename(file)
+	if !ok1
 	{
-		data, ok1 := os.read_entire_file_from_filename(file)
-		if !ok1
-		{
-			fmt.eprintln("JSON: Failed to load", file)
-			ok = false
-			return
-		}
-		defer delete(data)
-
-		json_data, err := json.parse(data)
-		if err != .None
-		{
-			fmt.eprintfln("JSON: Failed to parse %v. Error: %v", file, err)
-			ok = false
-			return
-		}
-
-		return json_data, true
+		fmt.eprintln("JSON: Failed to load", file)
+		ok = false
+		return
 	}
+	defer delete(data)
+
+	json_data, err := json.parse(data)
+	if err != .None
+	{
+		fmt.eprintfln("JSON: Failed to parse %v. Error: %v", file, err)
+		ok = false
+		return
+	}
+
+	return json_data, true
+}
