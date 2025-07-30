@@ -387,7 +387,7 @@ province_graph_load_from_file :: proc(file: string) -> (graph: map[u32][]u32, ok
 		neighbors := make([]u32, len(value.(json.Array)))
 		for neighbor, i in value.(json.Array)
 		{
-			neighbors[i] = u32(neighbor.(json.Integer))
+			neighbors[i] = u32(neighbor.(json.Float))
 		}
 		graph[u32(strconv.atoi(key))] = neighbors
 	}
