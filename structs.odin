@@ -1,21 +1,28 @@
 package main
 
-som_Camera :: struct
+import "vendor:sdl3"
+
+Camera :: struct
 {
 	pos: [2]f32,
 	offset: [2]f32,
 	zoom: f32
 }
 
-som_Rect :: struct
+Rect :: struct
 {
 	pos: [2]f32,
 	size: [2]f32
 }
 
-som_Timer :: struct
+Image :: struct
 {
-	start_time: f32,
-	time_left: f32,
-	run: bool
+	surface: ^sdl3.Surface,
+	tex: ^sdl3.Texture,
+	pos: [2]f32
+}
+
+GameState :: struct
+{
+	cam: Camera
 }

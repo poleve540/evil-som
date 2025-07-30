@@ -44,16 +44,21 @@ main :: proc()
 
 	sdl3.SetRenderVSync(renderer, 1)
 
-	map_surface := image.Load("map.png")
-	map_tex := sdl3.CreateTextureFromSurface(renderer, map_surface)
+	countries_surface := image.Load("map.png")
+	provinces_surface := image.Load("provinces.png")
+	assert(
+		countries_surface.w == provinces_surface.w &&
+		countries_surface.h == provinces_surface.h,
+		"Countries and provinces images should be the same dimensions"
+	)
+
+	map_tex := sdl3.CreateTextureFromSurface(renderer, countries_surface)
 	sdl3.SetTextureScaleMode(map_tex, .NEAREST)
 
-	provinces := image.Load("provinces.png")
-
-	province_centers, ok1 := load_province_centers_from_file("province_centers.json")
+	province_centers, ok1 := province_centers_load_from_file("province_centers.json")
 	if !ok1 do return
 
-	province_graph, ok2 := load_province_graph_from_file("province_neighbors.json")
+	province_graph, ok2 := province_graph_load_from_file("province_neighbors.json")
 	if !ok2 do return
 
 	pcolors := make(map[u32][3]u8)
@@ -69,29 +74,38 @@ main :: proc()
 	mouse_middle_pressed: bool
 	mouse_left_just_pressed: bool
 
-	map_rect := som_Rect{size = {f32(map_surface.w), f32(map_surface.h)}}
+	map_rect := Rect{size = {f32(countries_surface.w), f32(countries_surface.h)}}
 
-	cam := som_Camera{
+	cam := Camera{
 		pos = map_rect.size/2,
 		offset = {SW/2, SH/2},
 		zoom = 1
 	}
 
+	Division :: struct
+	{
+		pos: [2]f32,
+		province: u32,
+		path: [dynamic]u32,
+		timer: som_Timer
+	}
+
 	DIVISION_SIZE :: [2]f32{10, 10}
-	division_province: u32 = 256
-	division_timer := som_Timer{start_time = 0.5}
-	division_timer.time_left = division_timer.start_time
-	division_path: [dynamic]u32 // List of nodes the division must traverse
+	division := Division{
+		pos = province_centers[256],
+		province = 256
+	}
+	init_timer(&division.timer, 0.5)
 
 	last_ticks := sdl3.GetTicks()
-	delta_time: f32
-	current_ticks: u64
 
 	event: sdl3.Event
 	for global_run
 	{
-		current_ticks = sdl3.GetTicks()
-		delta_time = f32(current_ticks - last_ticks) / 1000
+		current_ticks := sdl3.GetTicks()
+		// Time elapsed since last update
+		delta_time := f32(current_ticks - last_ticks) / 1000
+		last_ticks = current_ticks
 
 		mouse_delta = {0, 0}
 		mouse_scroll = 0
@@ -129,8 +143,6 @@ main :: proc()
 			}
 		}
 
-		if division_timer.run do division_timer.time_left -= delta_time
-
 		if mouse_middle_pressed
 		{
 			cam.pos -= mouse_delta / cam.zoom
@@ -150,54 +162,49 @@ main :: proc()
 
 		exit: if mouse_left_just_pressed
 		{
-			// TODO(pol): Wrap it in a function
-			world_mouse_pos := vec2_screen_to_world(mouse_pos, &cam)
-			surface_size := [2]f32{f32(map_surface.w), f32(map_surface.h)}
-			pixel_pos := (world_mouse_pos - map_rect.pos) / map_rect.size * surface_size
-			pixel_pos.x = math.wrap(pixel_pos.x, f32(map_surface.w))
-			pixel_pos.y = math.wrap(pixel_pos.y, f32(map_surface.h))
-
-			pixel := get_surface_packed_rgb(provinces, {i32(pixel_pos.x), i32(pixel_pos.y)}) or_break exit
-			if pixel == 0 do break exit
-
-			path, found := dijkstra(province_graph, division_province, pixel)
-
-			if !found
+			get_selected_region :: proc( mouse_pos: [2]f32, cam: ^Camera, map_rect: Rect, provinces_surface: ^sdl3.Surface) -> (u32, bool)
 			{
-				delete(path)
-				break exit
+				world_mouse_pos := vec2_screen_to_world(mouse_pos, cam)
+				surface_size := [2]f32{f32(provinces_surface.w), f32(provinces_surface.h)}
+				pixel_pos := (world_mouse_pos - map_rect.pos) / map_rect.size * surface_size
+				pixel_pos.x = math.wrap(pixel_pos.x, surface_size.x)
+				pixel_pos.y = math.wrap(pixel_pos.y, surface_size.y)
+
+				selected_region, ok := get_surface_packed_rgb(provinces_surface, {i32(pixel_pos.x), i32(pixel_pos.y)})
+
+				if selected_region == 0 do ok = false
+
+				return selected_region, ok
 			}
 
-			division_path = path
-			division_timer.run = true
+			selected_province := get_selected_region(mouse_pos, &cam, map_rect, provinces_surface) or_break exit
+
+			path := get_shortest_path(province_graph, division.province, selected_province) or_break exit
+
+			division.path = path
+			division.timer.run = true
 		}
 
-		if division_timer.time_left < 0
+		if update_timer(&division.timer, delta_time)
 		{
-			division_province = pop_front(&division_path)
-			// Reset timer
-			division_timer.time_left = division_timer.start_time
-			if len(division_path) == 0
-			{
-				division_timer.run = false
-				delete(division_path)
-			}
+			assert(len(division.path) != 0)
+
+			division.province = pop_front(&division.path)
+			if len(division.path) == 0 do division.timer.run = false
 		}
 
 		render_game(
 			renderer, &cam,
 			map_rect, map_tex,
-			{province_centers[division_province], DIVISION_SIZE},
+			{province_centers[division.province], DIVISION_SIZE},
 			province_centers, province_graph, pcolors
 		)
 
 		sdl3.RenderPresent(renderer)
-
-		last_ticks = current_ticks
 	}
 }
 
-dijkstra :: proc(graph: map[u32][]u32, start: u32, goal: u32, include_start := false) -> (path: [dynamic]u32, found: bool)
+get_shortest_path :: proc(graph: map[u32][]u32, start: u32, goal: u32, include_start := false) -> (path: [dynamic]u32, found: bool)
 {
 	// TODO(pol): This is very slow. I should use a priority queue.
 	min_dist :: proc(nodes: []u32, dist: map[u32]int) -> int
@@ -293,7 +300,7 @@ dijkstra :: proc(graph: map[u32][]u32, start: u32, goal: u32, include_start := f
 	return
 }
 
-render_graph :: proc(renderer: ^sdl3.Renderer, cam: ^som_Camera, centers: json.Object, neighbors: json.Object, pcolors: map[string][3]u8)
+render_graph :: proc(renderer: ^sdl3.Renderer, cam: ^Camera, centers: json.Object, neighbors: json.Object, pcolors: map[string][3]u8)
 {
 	// For each province
 	for k, v in neighbors
@@ -303,7 +310,7 @@ render_graph :: proc(renderer: ^sdl3.Renderer, cam: ^som_Camera, centers: json.O
 		sdl3.SetRenderDrawColor(renderer, c.r, c.g, c.b, 0)
 
 		// Draw the center point
-		rect := som_Rect{
+		rect := Rect{
 			pos = json_array_to_vec2(centers[k].(json.Array)),
 			size = {1, 1}
 		}
@@ -323,8 +330,8 @@ render_graph :: proc(renderer: ^sdl3.Renderer, cam: ^som_Camera, centers: json.O
 	}
 }
 
-render_game :: proc(renderer: ^sdl3.Renderer, cam: ^som_Camera, map_rect: som_Rect,
-		    map_tex: ^sdl3.Texture, division_rect: som_Rect, centers: map[u32][2]f32,
+render_game :: proc(renderer: ^sdl3.Renderer, cam: ^Camera, map_rect: Rect,
+		    map_tex: ^sdl3.Texture, division_rect: Rect, centers: map[u32][2]f32,
 		    graph: map[u32][]u32, pcolors: map[u32][3]u8)
 {
 	sdl3.SetRenderDrawColor(renderer, 255, 255, 255, sdl3.ALPHA_OPAQUE)
@@ -334,7 +341,7 @@ render_game :: proc(renderer: ^sdl3.Renderer, cam: ^som_Camera, map_rect: som_Re
 	map_screen_rect := rect_world_to_screen(map_rect, cam)
 	map_screen_rect = rect_floor(map_screen_rect)
 
-	rect_floor :: proc(rect: som_Rect) -> som_Rect
+	rect_floor :: proc(rect: Rect) -> Rect
 	{
 		rect := rect
 		rect.pos = linalg.floor(rect.pos)
@@ -356,9 +363,9 @@ render_game :: proc(renderer: ^sdl3.Renderer, cam: ^som_Camera, map_rect: som_Re
 	sdl3.RenderFillRect(renderer, (^sdl3.FRect)(&division_screen_rect))
 }
 
-load_province_centers_from_file :: proc(file: string) -> (centers: map[u32][2]f32, ok: bool)
+province_centers_load_from_file :: proc(file: string) -> (centers: map[u32][2]f32, ok: bool)
 {
-	centers_json := load_json_from_file(file) or_return
+	centers_json := json_load_from_file(file) or_return
 
 	centers = make(map[u32][2]f32)
 	for key, value in centers_json.(json.Object)
@@ -370,9 +377,9 @@ load_province_centers_from_file :: proc(file: string) -> (centers: map[u32][2]f3
 	return
 }
 
-load_province_graph_from_file :: proc(file: string) -> (graph: map[u32][]u32, ok: bool)
+province_graph_load_from_file :: proc(file: string) -> (graph: map[u32][]u32, ok: bool)
 {
-	neighbors_json := load_json_from_file(file) or_return
+	neighbors_json := json_load_from_file(file) or_return
 
 	graph = make(map[u32][]u32)
 	for key, value in neighbors_json.(json.Object)
@@ -399,7 +406,7 @@ json_array_to_vec2 :: proc(array: json.Array) -> [2]f32
 	return {f32(x)+0.5, f32(y)+0.5}
 }
 
-vec2_screen_to_world :: proc(vec2: [2]f32, cam: ^som_Camera) -> [2]f32
+vec2_screen_to_world :: proc(vec2: [2]f32, cam: ^Camera) -> [2]f32
 {
 	vec2 := vec2
 	vec2 -= cam.offset
@@ -408,7 +415,7 @@ vec2_screen_to_world :: proc(vec2: [2]f32, cam: ^som_Camera) -> [2]f32
 	return vec2
 }
 
-vec2_world_to_screen :: proc(vec2: [2]f32, cam: ^som_Camera) -> [2]f32
+vec2_world_to_screen :: proc(vec2: [2]f32, cam: ^Camera) -> [2]f32
 {
 	vec2 := vec2
 	vec2 -= cam.pos
@@ -417,7 +424,7 @@ vec2_world_to_screen :: proc(vec2: [2]f32, cam: ^som_Camera) -> [2]f32
 	return vec2
 }
 
-rect_world_to_screen :: proc(rect: som_Rect, cam: ^som_Camera) -> som_Rect
+rect_world_to_screen :: proc(rect: Rect, cam: ^Camera) -> Rect
 {
 	rect := rect
 	rect.pos = vec2_world_to_screen(rect.pos, cam)
@@ -459,7 +466,7 @@ get_surface_packed_rgb :: proc(surface: ^sdl3.Surface, pixel_pos: [2]i32) -> (re
 	return
 }
 
-load_json_from_file :: proc(file: string) -> (root: json.Value, ok: bool)
+json_load_from_file :: proc(file: string) -> (root: json.Value, ok: bool)
 {
 	data, ok1 := os.read_entire_file_from_filename(file)
 	if !ok1
