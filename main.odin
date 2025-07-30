@@ -1,7 +1,8 @@
-package som
+package main
 
 import "vendor:sdl3"
 import "vendor:sdl3/image"
+import mu "vendor:microui"
 
 import "core:fmt"
 import "core:slice"
@@ -9,29 +10,17 @@ import "core:os"
 import "core:encoding/json"
 import "core:math"
 import "core:math/linalg"
+import "core:math/rand"
+import "core:strconv"
+import pq "core:container/priority_queue"
 
-global_run := true
 SW :: 1280
 SH :: 720
 
-som_Camera :: struct
-{
-	pos: [2]f32,
-	offset: [2]f32,
-	zoom: f32
-}
+SOM_DEBUG :: true
 
-som_Rect :: struct
-{
-	pos: [2]f32,
-	size: [2]f32
-}
-
-som_Timer :: struct
-{
-	start_time: f32,
-	time_left: f32
-}
+global_run := true
+global_mu_context: mu.Context
 
 main :: proc()
 {
@@ -61,11 +50,17 @@ main :: proc()
 
 	provinces := image.Load("provinces.png")
 
-	centers_json, ok1 := load_json_from_file("province_centers.json")
+	province_centers, ok1 := load_province_centers_from_file("province_centers.json")
 	if !ok1 do return
 
-	neighbors_json, ok2 := load_json_from_file("province_neighbors.json")
+	province_graph, ok2 := load_province_graph_from_file("province_neighbors.json")
 	if !ok2 do return
+
+	pcolors := make(map[u32][3]u8)
+	for k in province_centers
+	{
+		pcolors[k] = {u8(rand.int_max(255)), u8(rand.int_max(255)), u8(rand.int_max(255))}
+	}
 
 	mouse_pos: [2]f32
 	mouse_delta: [2]f32
@@ -83,14 +78,21 @@ main :: proc()
 	}
 
 	DIVISION_SIZE :: [2]f32{10, 10}
-	division_pos := [2]f32{}
-	division_timer := som_Timer{start_time = 1.0}
-	// List of nodes the division must traverse
-	division_path := [dynamic]string{}
+	division_province: u32 = 256
+	division_timer := som_Timer{start_time = 0.5}
+	division_timer.time_left = division_timer.start_time
+	division_path: [dynamic]u32 // List of nodes the division must traverse
+
+	last_ticks := sdl3.GetTicks()
+	delta_time: f32
+	current_ticks: u64
 
 	event: sdl3.Event
 	for global_run
 	{
+		current_ticks = sdl3.GetTicks()
+		delta_time = f32(current_ticks - last_ticks) / 1000
+
 		mouse_delta = {0, 0}
 		mouse_scroll = 0
 		mouse_left_just_pressed = false
@@ -127,6 +129,8 @@ main :: proc()
 			}
 		}
 
+		if division_timer.run do division_timer.time_left -= delta_time
+
 		if mouse_middle_pressed
 		{
 			cam.pos -= mouse_delta / cam.zoom
@@ -152,47 +156,183 @@ main :: proc()
 			pixel_pos := (world_mouse_pos - map_rect.pos) / map_rect.size * surface_size
 			pixel_pos.x = math.wrap(pixel_pos.x, f32(map_surface.w))
 			pixel_pos.y = math.wrap(pixel_pos.y, f32(map_surface.h))
-			pixel, ok1 := get_surface_packed_rgb(provinces, {i32(pixel_pos.x), i32(pixel_pos.y)})
 
-			if !ok1 || pixel == 0 do break exit
-			rgb_string := fmt.aprint(pixel)
-			defer delete(rgb_string)
+			pixel := get_surface_packed_rgb(provinces, {i32(pixel_pos.x), i32(pixel_pos.y)}) or_break exit
+			if pixel == 0 do break exit
 
-			center, ok2 := centers_json.(json.Object)[rgb_string]
-			if !ok2
+			path, found := dijkstra(province_graph, division_province, pixel)
+
+			if !found
 			{
-				fmt.eprintln("Province center not found!:", rgb_string)
+				delete(path)
 				break exit
 			}
 
-			division_pos = json_array_to_vec2(center.(json.Array))
+			division_path = path
+			division_timer.run = true
+		}
 
-			json_array_to_vec2 :: proc(array: json.Array) -> [2]f32
+		if division_timer.time_left < 0
+		{
+			division_province = pop_front(&division_path)
+			// Reset timer
+			division_timer.time_left = division_timer.start_time
+			if len(division_path) == 0
 			{
-				assert(len(array) == 2)
-				x, ok1 := array[0].(json.Float)
-				y, ok2 := array[1].(json.Float)
-				assert(ok1 && ok2)
-				// pixel center
-				return {f32(x)+0.5, f32(y)+0.5}
+				division_timer.run = false
+				delete(division_path)
 			}
 		}
 
-		render_game(renderer, &cam, map_rect, map_tex, {division_pos, DIVISION_SIZE})
+		render_game(
+			renderer, &cam,
+			map_rect, map_tex,
+			{province_centers[division_province], DIVISION_SIZE},
+			province_centers, province_graph, pcolors
+		)
 
 		sdl3.RenderPresent(renderer)
+
+		last_ticks = current_ticks
 	}
 }
 
-render_game :: proc(renderer: ^sdl3.Renderer, cam: ^som_Camera, map_rect: som_Rect, map_tex: ^sdl3.Texture, division_rect: som_Rect)
+dijkstra :: proc(graph: map[u32][]u32, start: u32, goal: u32, include_start := false) -> (path: [dynamic]u32, found: bool)
+{
+	// TODO(pol): This is very slow. I should use a priority queue.
+	min_dist :: proc(nodes: []u32, dist: map[u32]int) -> int
+	{
+		assert(len(nodes) != 0)
+
+		min := 0
+
+		for n, i in nodes
+		{
+			assert(n in dist)
+			if dist[n] < dist[nodes[min]]
+			{
+				min = i
+			}
+		}
+
+		return min
+	}
+
+	Node :: struct
+	{
+		value: u32,
+		cost: int
+	}
+
+	q: pq.Priority_Queue(Node)
+	pq.init(&q,
+		proc(a, b: Node) -> bool {return a.cost < b.cost},
+		pq.default_swap_proc(Node)
+	)
+	defer pq.destroy(&q)
+
+	prev := make(map[u32]u32)
+	defer delete(prev)
+	cost := make(map[u32]int)
+	defer delete(cost)
+
+	cost[start] = 0
+	pq.push(&q, Node{start, 0})
+
+	for k in graph
+	{
+		if k == start do continue
+		cost[k] = 1e7
+		pq.push(&q, Node{k, 1e7})
+	}
+
+	outer: for pq.len(q) != 0
+	{
+		u := pq.pop(&q).value
+
+		if cost[u] == 1e7 do break
+
+		for v in graph[u]
+		{
+			current_cost_v := cost[u] + 1
+			if current_cost_v < cost[v]
+			{
+				prev[v] = u
+				if v == goal do break outer
+
+				cost[v] = current_cost_v
+				for n, i in q.queue
+				{
+					if n.value == v
+					{
+						q.queue[i].cost = current_cost_v
+						pq.fix(&q, i)
+						break
+					}
+				}
+			}
+
+		}
+	}
+
+	// Goal not found
+	if goal not_in prev do return
+
+	path = make([dynamic]u32)
+	u := goal
+	for u != start
+	{
+		append(&path, u)
+		u = prev[u]
+	}
+	if include_start do append(&path, start)
+
+	slice.reverse(path[:])
+	found = true
+
+	return
+}
+
+render_graph :: proc(renderer: ^sdl3.Renderer, cam: ^som_Camera, centers: json.Object, neighbors: json.Object, pcolors: map[string][3]u8)
+{
+	// For each province
+	for k, v in neighbors
+	{
+		c := pcolors[k]
+
+		sdl3.SetRenderDrawColor(renderer, c.r, c.g, c.b, 0)
+
+		// Draw the center point
+		rect := som_Rect{
+			pos = json_array_to_vec2(centers[k].(json.Array)),
+			size = {1, 1}
+		}
+
+		rect = rect_world_to_screen(rect, cam)
+
+		sdl3.RenderFillRect(renderer, (^sdl3.FRect)(&rect))
+
+		// Draw lines to other provinces
+		for neighbor in v.(json.Array)
+		{
+			npos := json_array_to_vec2(centers[neighbor.(json.String)].(json.Array))
+			npos = vec2_world_to_screen(npos, cam)
+
+			sdl3.RenderLine(renderer, rect.pos.x, rect.pos.y, npos.x, npos.y)
+		}
+	}
+}
+
+render_game :: proc(renderer: ^sdl3.Renderer, cam: ^som_Camera, map_rect: som_Rect,
+		    map_tex: ^sdl3.Texture, division_rect: som_Rect, centers: map[u32][2]f32,
+		    graph: map[u32][]u32, pcolors: map[u32][3]u8)
 {
 	sdl3.SetRenderDrawColor(renderer, 255, 255, 255, sdl3.ALPHA_OPAQUE)
 	sdl3.RenderClear(renderer)
 
 	// TODO(pol): Have the map's FRect, texture and surfaces together
 	map_screen_rect := rect_world_to_screen(map_rect, cam)
-	fmt.println(map_screen_rect)
-	fmt.println(cam.zoom)
+	map_screen_rect = rect_floor(map_screen_rect)
 
 	rect_floor :: proc(rect: som_Rect) -> som_Rect
 	{
@@ -203,13 +343,60 @@ render_game :: proc(renderer: ^sdl3.Renderer, cam: ^som_Camera, map_rect: som_Re
 		return rect
 	}
 
-	// map_screen_rect = rect_floor(map_screen_rect)
 	// TODO(pol): Should be tiled using sdl3.RenderTextureTiled
 	sdl3.RenderTexture(renderer, map_tex, nil, (^sdl3.FRect)(&map_screen_rect))
+
+	// when SOM_DEBUG
+	// {
+	// 	render_graph(renderer, cam, centers, graph, pcolors)
+	// }
 
 	// World position to screen
 	division_screen_rect := rect_world_to_screen(division_rect, cam)
 	sdl3.RenderFillRect(renderer, (^sdl3.FRect)(&division_screen_rect))
+}
+
+load_province_centers_from_file :: proc(file: string) -> (centers: map[u32][2]f32, ok: bool)
+{
+	centers_json := load_json_from_file(file) or_return
+
+	centers = make(map[u32][2]f32)
+	for key, value in centers_json.(json.Object)
+	{
+		centers[u32(strconv.atoi(key))] = json_array_to_vec2(value.(json.Array))
+	}
+
+	ok = true
+	return
+}
+
+load_province_graph_from_file :: proc(file: string) -> (graph: map[u32][]u32, ok: bool)
+{
+	neighbors_json := load_json_from_file(file) or_return
+
+	graph = make(map[u32][]u32)
+	for key, value in neighbors_json.(json.Object)
+	{
+		neighbors := make([]u32, len(value.(json.Array)))
+		for neighbor, i in value.(json.Array)
+		{
+			neighbors[i] = u32(strconv.atoi(neighbor.(json.String)))
+		}
+		graph[u32(strconv.atoi(key))] = neighbors
+	}
+
+	ok = true
+	return
+}
+
+json_array_to_vec2 :: proc(array: json.Array) -> [2]f32
+{
+	assert(len(array) == 2)
+	x, ok1 := array[0].(json.Float)
+	y, ok2 := array[1].(json.Float)
+	assert(ok1 && ok2)
+	// pixel center
+	return {f32(x)+0.5, f32(y)+0.5}
 }
 
 vec2_screen_to_world :: proc(vec2: [2]f32, cam: ^som_Camera) -> [2]f32
@@ -249,7 +436,7 @@ vec2_floor :: proc(v: [2]f32) -> [2]f32
 }
 
 // TODO(pol): Speed could be improved by converting all surfaces to a common format
-get_surface_packed_rgb :: proc(surface: ^sdl3.Surface, pixel_pos: [2]i32) -> (result: i32, ok: bool)
+get_surface_packed_rgb :: proc(surface: ^sdl3.Surface, pixel_pos: [2]i32) -> (result: u32, ok: bool)
 {
 	pixels := slice.bytes_from_ptr(surface.pixels, int(surface.h*surface.pitch))
 
@@ -262,10 +449,10 @@ get_surface_packed_rgb :: proc(surface: ^sdl3.Surface, pixel_pos: [2]i32) -> (re
 		i := pixel_pos.y*surface.pitch + pixel_pos.x * i32(size)
 		packed_rgb := (^u32)(&pixels[i])
 
-		rgb_result := [4]byte{}
+		rgb_result: [4]byte
 		sdl3.GetRGB(packed_rgb^, format, nil, &rgb_result.r, &rgb_result.g, &rgb_result.b)
 
-		result = (^i32)(&rgb_result[0])^
+		result = (^u32)(&rgb_result[0])^
 		ok = true
 	}
 
