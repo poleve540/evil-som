@@ -47,7 +47,7 @@ def main():
         for n in neighbors:
             rgban = n + (0,)
             packedn = struct.pack("<4B", *rgban)
-            packed_neighbors.append(str(int.from_bytes(packedn, byteorder="little", signed=True)))
+            packed_neighbors.append(int.from_bytes(packedn, byteorder="little", signed=True))
 
         assert(len(packed_neighbors) == len(neighbors))
 
