@@ -17,8 +17,6 @@ import pq "core:container/priority_queue"
 SW :: 1280
 SH :: 720
 
-SOM_DEBUG :: true
-
 global_run := true
 global_mu_context: mu.Context
 
@@ -108,12 +106,7 @@ main :: proc()
 		update_division(&division, &game, delta_time)
 
 		// TODO(pol): Use game as parameter
-		render_game(
-			renderer, &game.cam,
-			game.map_rect, map_tex,
-			{game.province_centers[division.province], DIVISION_SIZE},
-			game.province_centers, game.province_graph, pcolors
-		)
+		render_game(renderer, &game, map_tex, {game.province_centers[division.province], DIVISION_SIZE})
 
 		sdl3.RenderPresent(renderer)
 	}
@@ -355,37 +348,32 @@ render_graph :: proc(renderer: ^sdl3.Renderer, cam: ^Camera, centers: json.Objec
 	}
 }
 
-render_game :: proc(renderer: ^sdl3.Renderer, cam: ^Camera, map_rect: Rect,
-		    map_tex: ^sdl3.Texture, division_rect: Rect, centers: map[u32][2]f32,
-		    graph: Graph, pcolors: map[u32][3]u8)
+render_game :: proc(renderer: ^sdl3.Renderer, game: ^GameState, map_tex: ^sdl3.Texture, division_rect: Rect)
 {
 	sdl3.SetRenderDrawColor(renderer, 255, 255, 255, sdl3.ALPHA_OPAQUE)
 	sdl3.RenderClear(renderer)
 
-	// TODO(pol): Have the map's FRect, texture and surfaces together
-	map_screen_rect := rect_world_to_screen(map_rect, cam)
+	// Render map
+	map_screen_rect := rect_world_to_screen(game.map_rect, &game.cam)
 	map_screen_rect = rect_floor(map_screen_rect)
-
-	rect_floor :: proc(rect: Rect) -> Rect
-	{
-		rect := rect
-		rect.pos = linalg.floor(rect.pos)
-		rect.size = linalg.floor(rect.size)
-
-		return rect
-	}
-
 	// TODO(pol): Should be tiled using sdl3.RenderTextureTiled
 	sdl3.RenderTexture(renderer, map_tex, nil, (^sdl3.FRect)(&map_screen_rect))
 
-	// when SOM_DEBUG
-	// {
-	// 	render_graph(renderer, cam, centers, graph, pcolors)
-	// }
+	// render_graph(renderer, cam, centers, graph, pcolors)
 
-	// World position to screen
-	division_screen_rect := rect_world_to_screen(division_rect, cam)
+	// Render division
+	sdl3.SetRenderDrawColor(renderer, 33, 94, 65, sdl3.ALPHA_OPAQUE)
+	division_screen_rect := rect_world_to_screen(division_rect, &game.cam)
 	sdl3.RenderFillRect(renderer, (^sdl3.FRect)(&division_screen_rect))
+}
+
+rect_floor :: proc(rect: Rect) -> Rect
+{
+	rect := rect
+	rect.pos = linalg.floor(rect.pos)
+	rect.size = linalg.floor(rect.size)
+
+	return rect
 }
 
 province_centers_load_from_file :: proc(file: string) -> (centers: map[u32][2]f32, ok: bool)
