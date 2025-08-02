@@ -28,13 +28,13 @@ main :: proc()
 
 	if window == nil
 	{
-		sdl3.LogError(i32(sdl3.LogCategory.ERROR), "Could not create window: %s\n", sdl3.GetError())
+		fmt.eprintfln("Could not create window: %s", sdl3.GetError())
 		return
 	}
 
 	if renderer == nil
 	{
-		sdl3.LogError(i32(sdl3.LogCategory.ERROR), "Could not create renderer: %s\n", sdl3.GetError())
+		fmt.eprintfln("Could not create renderer: %s", sdl3.GetError())
 		return
 	}
 
