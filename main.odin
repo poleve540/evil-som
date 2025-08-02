@@ -2,7 +2,6 @@ package main
 
 import "vendor:sdl3"
 import "vendor:sdl3/image"
-import mu "vendor:microui"
 
 import "core:fmt"
 import "core:slice"
@@ -18,7 +17,6 @@ SW :: 1280
 SH :: 720
 
 global_run := true
-global_mu_context: mu.Context
 
 main :: proc()
 {
@@ -45,13 +43,11 @@ main :: proc()
 	// Game data
 	game: GameState
 	if !init_game(&game) do return
-	DIVISION_SIZE :: [2]f32{10, 10}
-	division: Division
-	init_division(&division, &game)
 
 	// Rendering data
 	map_tex := sdl3.CreateTextureFromSurface(renderer, game.country_surface)
 	sdl3.SetTextureScaleMode(map_tex, .NEAREST)
+
 	pcolors := make(map[u32][3]u8, len(game.province_centers))
 	for k in game.province_centers
 	{
@@ -103,20 +99,17 @@ main :: proc()
 		}
 
 		update_game_camera(&game)
-		update_division(&division, &game, delta_time)
+		for &d in game.divisions do update_division(&d, &game, delta_time)
 
-		// TODO(pol): Use game as parameter
-		render_game(renderer, &game, map_tex, {game.province_centers[division.province], DIVISION_SIZE})
+		render_game(renderer, &game, map_tex)
 
 		sdl3.RenderPresent(renderer)
 	}
 }
 
-init_division :: proc(division: ^Division, game: ^GameState)
+init_division :: proc(division: ^Division, game: ^GameState, start_province: u32)
 {
-	DEFAULT_PROVINCE :: 256
-	division.province = DEFAULT_PROVINCE
-	division.pos = game.province_centers[division.province]
+	division.province = start_province
 	init_timer(&division.timer, 0.5)
 }
 
@@ -182,6 +175,20 @@ init_game :: proc(game: ^GameState) -> bool
 	game.province_centers = province_centers
 	game.province_graph = province_graph
 
+	provinces, err := slice.map_keys(game.province_graph)
+	if err != .None
+	{
+		fmt.eprintln(err)
+		return false
+	}
+	for i in 0..<10
+	{
+		division: Division
+		start_province := rand.choice(provinces)
+		init_division(&division, game, start_province)
+		append(&game.divisions, division)
+	}
+
 	return true
 }
 
@@ -194,12 +201,13 @@ update_division :: proc(division: ^Division, game: ^GameState, delta_time: f32)
 		division.timer.run = true
 	}
 
-	if !update_timer(&division.timer, delta_time) do return
-
-	assert(len(division.path) != 0)
-
-	division.province = pop_front(&division.path)
-	if len(division.path) == 0 do division.timer.run = false
+	i := update_timer(&division.timer, delta_time)
+	for _ in 0..<i
+	{
+		assert(len(division.path) != 0)
+		division.province = pop_front(&division.path)
+		if len(division.path) == 0 do division.timer.run = false
+	}
 }
 
 update_game_camera :: proc(using game: ^GameState)
@@ -348,7 +356,7 @@ render_graph :: proc(renderer: ^sdl3.Renderer, cam: ^Camera, centers: json.Objec
 	}
 }
 
-render_game :: proc(renderer: ^sdl3.Renderer, game: ^GameState, map_tex: ^sdl3.Texture, division_rect: Rect)
+render_game :: proc(renderer: ^sdl3.Renderer, game: ^GameState, map_tex: ^sdl3.Texture)
 {
 	sdl3.SetRenderDrawColor(renderer, 255, 255, 255, sdl3.ALPHA_OPAQUE)
 	sdl3.RenderClear(renderer)
@@ -362,9 +370,14 @@ render_game :: proc(renderer: ^sdl3.Renderer, game: ^GameState, map_tex: ^sdl3.T
 	// render_graph(renderer, cam, centers, graph, pcolors)
 
 	// Render division
-	sdl3.SetRenderDrawColor(renderer, 33, 94, 65, sdl3.ALPHA_OPAQUE)
-	division_screen_rect := rect_world_to_screen(division_rect, &game.cam)
-	sdl3.RenderFillRect(renderer, (^sdl3.FRect)(&division_screen_rect))
+	DIVISION_SIZE :: [2]f32{5, 5}
+	sdl3.SetRenderDrawColor(renderer, 0, 0, 255, sdl3.ALPHA_OPAQUE)
+	for d in game.divisions
+	{
+		division_rect := Rect{game.province_centers[d.province], DIVISION_SIZE}
+		division_screen_rect := rect_world_to_screen(division_rect, &game.cam)
+		sdl3.RenderFillRect(renderer, (^sdl3.FRect)(&division_screen_rect))
+	}
 }
 
 rect_floor :: proc(rect: Rect) -> Rect

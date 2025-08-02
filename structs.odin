@@ -17,7 +17,6 @@ Rect :: struct
 
 Division :: struct
 {
-	pos: [2]f32,
 	province: u32,
 	path: [dynamic]u32,
 	timer: som_Timer
