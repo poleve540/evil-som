@@ -50,32 +50,6 @@ Node :: struct
 
 Graph :: #soa[]Node
 
-button_just_pressed :: proc(using game: ^GameState, button: union #no_nil {Key, MouseButton}) -> bool
-{
-	switch b in button
-	{
-	case Key:
-		return !keys_prev[b] && keys[b]
-	case MouseButton:
-		return !mouse_buttons_prev[b] && mouse_buttons[b]
-	}
-
-	return false
-}
-
-button_pressed :: proc(game: ^GameState, button: union {Key, MouseButton}) -> bool
-{
-	switch b in button
-	{
-		case Key:
-			return game.keys[b]
-		case MouseButton:
-			return game.mouse_buttons[b]
-	}
-
-	return false
-}
-
 GameState :: struct
 {
 	cam: Camera,
