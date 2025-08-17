@@ -151,7 +151,7 @@ get_hovered_province :: proc(using game: ^GameState) -> (region: int, ok: bool)
 	pixel_pos.x = math.wrap(pixel_pos.x, surface_size.x)
 	pixel_pos.y = math.wrap(pixel_pos.y, surface_size.y)
 
-	region_rgb := get_surface_packed_rgb(province_surface, {i32(pixel_pos.x), i32(pixel_pos.y)}) or_return
+	region_rgb := get_rgba32_surface_packed_rgb(province_surface, {i32(pixel_pos.x), i32(pixel_pos.y)}) or_return
 
 	if region_rgb == 0 do return
 
@@ -189,7 +189,9 @@ division_set_target :: proc(division: ^Division, game: ^GameState, goal: int) ->
 game_init :: proc(game: ^GameState) -> bool
 {
 	country_surface := image.Load("map.png")
-	province_surface := image.Load("provinces.png")
+	province_surface_tmp := image.Load("provinces.png")
+	province_surface := sdl3.ConvertSurface(province_surface_tmp, .RGBA32)
+	sdl3.DestroySurface(province_surface_tmp)
 
 	if country_surface == nil
 	{
@@ -438,26 +440,14 @@ vec2_floor :: proc(v: [2]f32) -> [2]f32
 	return v
 }
 
-// TODO(pol): Speed could be improved by converting all surfaces to a common format
-// Specifically a packed ABGR u32
-get_surface_packed_rgb :: proc(surface: ^sdl3.Surface, pixel_pos: [2]i32) -> (result: u32, ok: bool)
+get_rgba32_surface_packed_rgb :: proc(surface: ^sdl3.Surface, pixel_pos: [2]i32) -> (result: u32, ok: bool)
 {
 	pixels := slice.bytes_from_ptr(surface.pixels, int(surface.h*surface.pitch))
 
-	// NOTE(pol): SDL internally uses a hash table for finding the pixel format
-	format := sdl3.GetPixelFormatDetails(surface.format)
-	size := format.bytes_per_pixel
-
 	if pixel_pos.x >= 0 && pixel_pos.x < surface.w && pixel_pos.y >= 0 && pixel_pos.y < surface.h
 	{
-		i := pixel_pos.y*surface.pitch + pixel_pos.x * i32(size)
-		packed_rgb := (^u32)(&pixels[i])
-
-		rgb_result: [4]byte
-		sdl3.GetRGB(packed_rgb^, format, nil, &rgb_result.r, &rgb_result.g, &rgb_result.b)
-
-		result = (^u32)(&rgb_result[0])^
-		ok = true
+		i := pixel_pos.y*surface.pitch + pixel_pos.x * 4
+		return (^u32)(&pixels[i])^ & 0x00FFFFFF, true
 	}
 
 	return
