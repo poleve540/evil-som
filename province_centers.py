@@ -11,11 +11,11 @@ import statistics
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("image", type=str)
+    parser.add_argument("provinces_image", type=str)
     parser.add_argument("--outpath", default="province_centers.json", type=str)
     args = parser.parse_args()
 
-    image = Image.open(args.outpath).convert("RGB")
+    image = Image.open(args.provinces_image).convert("RGB")
     pixels = image.load()
     if not pixels:
         return
