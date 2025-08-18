@@ -67,7 +67,6 @@ GameState :: struct
 	divisions: [dynamic]Division,
 
 	selected_province: int,
-	pressed_province: bool,
 
 	// TODO(pol): Put all this in some kind of MouseState struct
 	mouse_delta: [2]f32,

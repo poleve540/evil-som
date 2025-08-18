@@ -97,6 +97,11 @@ main :: proc()
 			}
 		}
 
+		if button_just_pressed(&game, MouseButton.LEFT)
+		{
+			game.selected_province = get_hovered_province(&game) or_else 0
+		}
+
 		camera_update(&game, delta_time)
 
 		for &d in game.divisions
@@ -156,13 +161,14 @@ get_hovered_province :: proc(using game: ^GameState) -> (region: int, ok: bool)
 	if region_rgb == 0 do return
 
 	region = rgb_to_node[region_rgb]
-
 	ok = true
 	return
 }
 
-division_set_target :: proc(division: ^Division, game: ^GameState, goal: int) -> bool
+division_update_path :: proc(division: ^Division, game: ^GameState) -> bool
 {
+	goal := game.selected_province
+
 	if game.pathfinding.update_flowfield[goal]
 	{
 		game.pathfinding.flowfields[goal] = get_all_shortest_paths_dijkstra(&game.pathfinding, game.province_graph, goal)
@@ -296,7 +302,7 @@ division_update :: proc(division: ^Division, game: ^GameState, delta_time: f32)
 		return linalg.distance(graph[a].center_pos, graph[b].center_pos)
 	}
 
-	if !slice.is_empty(division.path[:])
+	division_advance :: proc(division: ^Division, graph: Graph, delta_time: f32)
 	{
 		division.distance_traveled += delta_time * division.speed
 
@@ -307,28 +313,29 @@ division_update :: proc(division: ^Division, game: ^GameState, delta_time: f32)
 			if slice.is_empty(division.path[:]) do break
 
 			next := slice.first(division.path[:])
-			division.total_distance = province_distance(game.province_graph, division.province, next)
+			division.total_distance = province_distance(graph, division.province, next)
 
 			division.distance_traveled -= division.total_distance
 		}
 	}
 
+	if !slice.is_empty(division.path[:]) do division_advance(division, game.province_graph, delta_time)
+
 	exit: if button_just_pressed(game, MouseButton.LEFT)
 	{
-		// TODO(pol): Compute selected_province early, before division_update()
-		selected_province := get_hovered_province(game) or_break exit
+		if game.selected_province == 0 do break exit
 
 		// Already on the selected province
-		if selected_province == division.province do break exit
+		if game.selected_province == division.province do break exit
 
 		// Already on it's way the selected province
 		if !slice.is_empty(division.path[:]) &&
-		selected_province == slice.last(division.path[:])
+		game.selected_province == slice.last(division.path[:])
 		{
 			break exit
 		}
 
-		division_set_target(division, game, selected_province) or_break exit
+		division_update_path(division, game) or_break exit
 
 		division.distance_traveled = 0
 		next := slice.first(division.path[:])
