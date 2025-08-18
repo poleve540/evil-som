@@ -188,10 +188,16 @@ division_set_target :: proc(division: ^Division, game: ^GameState, goal: int) ->
 
 game_init :: proc(game: ^GameState) -> bool
 {
-	country_surface := image.Load("map.png")
-	province_surface_tmp := image.Load("provinces.png")
-	province_surface := sdl3.ConvertSurface(province_surface_tmp, .RGBA32)
-	sdl3.DestroySurface(province_surface_tmp)
+	load_rgba32_image :: proc(file: cstring) -> ^sdl3.Surface
+	{
+		surface := image.Load(file)
+		rgba_surface := sdl3.ConvertSurface(surface, .RGBA32)
+		sdl3.DestroySurface(surface)
+		return rgba_surface
+	}
+
+	country_surface := load_rgba32_image("map.png")
+	province_surface := load_rgba32_image("provinces.png")
 
 	if country_surface == nil
 	{
