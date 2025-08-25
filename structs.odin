@@ -45,7 +45,8 @@ MouseButton :: enum
 Node :: struct
 {
 	neighbors: []int,
-	center_pos: [2]f32
+	center_pos: [2]f32,
+	walkable: bool
 }
 
 Graph :: #soa[]Node

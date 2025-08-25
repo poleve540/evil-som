@@ -8,7 +8,6 @@ import argparse
 from collections import defaultdict
 import statistics
 
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("provinces_image", type=str)

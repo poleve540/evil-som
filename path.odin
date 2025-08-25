@@ -54,8 +54,8 @@ get_all_shortest_paths_dijkstra :: proc(using path: ^PathfindingContext, graph: 
 
 		for u in graph[v].neighbors
 		{
-			new_cost := cost[v] + (linalg.distance(graph[v].center_pos, graph[u].center_pos))
-			if !visited[u] || new_cost < cost[u]
+			new_cost := cost[v] + node_distance(graph, u, v)
+			if graph[u].walkable && (!visited[u] || new_cost < cost[u])
 			{
 				cost[u] = new_cost
 				queue.push(&q, QueueItem{u, new_cost})
@@ -68,42 +68,3 @@ get_all_shortest_paths_dijkstra :: proc(using path: ^PathfindingContext, graph: 
 	return flowfield
 }
 
-// find_path :: proc(graph: Graph, start, goal: int, append_start := false) -> (path: [dynamic]int, found: bool)
-// {
-// 	slice.fill(visited, false)
-// 	queue.clear(&q)
-//
-// 	visited[start] = true
-// 	queue.enqueue(&q, start)
-//
-// 	for queue.len(q) != 0
-// 	{
-// 		v := queue.dequeue(&q)
-//
-// 		if v == goal do break
-//
-// 		for u in graph[v].neighbors
-// 		{
-// 			if !visited[u]
-// 			{
-// 				queue.enqueue(&q, u)
-// 				visited[u] = true
-// 				prev[u] = v
-// 			}
-// 		}
-// 	}
-//
-// 	// Goal not found
-// 	if !visited[goal] do return
-//
-// 	v := goal
-// 	for v != start
-// 	{
-// 		append(&path, v)
-// 		v = prev[v]
-// 	}
-// 	if append_start do append(&path, start)
-// 	slice.reverse(path[:])
-//
-// 	return path, true
-// }

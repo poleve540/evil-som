@@ -37,6 +37,14 @@ def main():
                         continue
                     color_neighbors[color].add(n_color)
 
+    # Add remaining provinces with no neighbors
+    for y in range(height):
+        for x in range(width):
+            if pixels[x, y] == BLACK or pixels[x, y] in color_neighbors:
+                continue
+
+            color_neighbors[pixels[x, y]] = set()
+
     json_out = {}
     for color, neighbors in color_neighbors.items():
         rgba = color + (0,)

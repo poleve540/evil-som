@@ -97,17 +97,7 @@ main :: proc()
 			}
 		}
 
-		if button_just_pressed(&game, MouseButton.LEFT)
-		{
-			game.selected_province = get_hovered_province(&game) or_else 0
-		}
-
-		camera_update(&game, delta_time)
-
-		for &d in game.divisions
-		{
-			division_update(&d, &game, delta_time)
-		}
+		game_update(&game, delta_time)
 
 		game_render(renderer, &game, map_tex)
 
@@ -115,7 +105,19 @@ main :: proc()
 	}
 }
 
-button_just_pressed :: proc(using game: ^GameState, button: union #no_nil {Key, MouseButton}) -> bool
+game_update :: proc(using game: ^GameState, delta_time: f32)
+{
+	if is_button_just_pressed(game, MouseButton.LEFT)
+	{
+		selected_province = get_hovered_province(game) or_else 0
+	}
+
+	camera_update(game, delta_time)
+
+	for &d in divisions do division_update(&d, game, delta_time)
+}
+
+is_button_just_pressed :: proc(using game: ^GameState, button: union #no_nil {Key, MouseButton}) -> bool
 {
 	switch b in button
 	{
@@ -128,7 +130,7 @@ button_just_pressed :: proc(using game: ^GameState, button: union #no_nil {Key, 
 	return false
 }
 
-button_pressed :: proc(game: ^GameState, button: union {Key, MouseButton}) -> bool
+is_button_pressed :: proc(game: ^GameState, button: union {Key, MouseButton}) -> bool
 {
 	switch b in button
 	{
@@ -233,19 +235,19 @@ game_init :: proc(game: ^GameState) -> bool
 		zoom = 1
 	}
 
-	matching_keys :: proc(a, b: $M/map[$K]$V) -> bool
-	{
-		if len(a) != len(b) do return false
-		for k in a do if k not_in b do return false
-		for k in b do if k not_in a do return false
-
-		return true
-	}
-
 	province_centers_json := json_load_from_file("province_centers.json") or_return
 	defer json.destroy_value(province_centers_json)
 	province_neighbors_json := json_load_from_file("province_neighbors.json") or_return
 	defer json.destroy_value(province_neighbors_json)
+
+	matching_keys :: proc(a, b: $M/map[$K]$V) -> bool
+	{
+		for k in a do if k not_in b do return false
+		for k in b do if k not_in a do return false
+		if len(a) != len(b) do return false
+
+		return true
+	}
 
 	if !matching_keys(province_centers_json.(json.Object), province_neighbors_json.(json.Object))
 	{
@@ -277,13 +279,18 @@ game_init :: proc(game: ^GameState) -> bool
 		center_pos := json_array_to_vec2(province_centers_json.(json.Object)[v].(json.Array))
 		game.rgb_to_node[u32(strconv.atoi(v))] = i
 
+		a := linalg.to_i32(center_pos)
+		country_color := get_rgba32_surface_packed_rgb(game.country_surface, a) or_return
+
 		game.province_graph[i] = Node{
 			neighbors = neighbors,
-			center_pos = center_pos
+			center_pos = center_pos,
+			walkable = true
 		}
 	}
 
-	game.divisions = make([dynamic]Division, 10)
+	// divisions_init
+	game.divisions = make([dynamic]Division, 100)
 	for &division in game.divisions
 	{
 		start_province := rand.int63_max(i64(len(game.province_graph)))
@@ -295,13 +302,13 @@ game_init :: proc(game: ^GameState) -> bool
 	return true
 }
 
+node_distance :: proc(graph: Graph, a, b: int) -> f32
+{
+	return linalg.distance(graph[a].center_pos, graph[b].center_pos)
+}
+
 division_update :: proc(division: ^Division, game: ^GameState, delta_time: f32)
 {
-	province_distance :: proc(graph: Graph, a, b: int) -> f32
-	{
-		return linalg.distance(graph[a].center_pos, graph[b].center_pos)
-	}
-
 	division_advance :: proc(division: ^Division, graph: Graph, delta_time: f32)
 	{
 		division.distance_traveled += delta_time * division.speed
@@ -312,16 +319,16 @@ division_update :: proc(division: ^Division, game: ^GameState, delta_time: f32)
 
 			if slice.is_empty(division.path[:]) do break
 
-			next := slice.first(division.path[:])
-			division.total_distance = province_distance(graph, division.province, next)
-
 			division.distance_traveled -= division.total_distance
+
+			next := slice.first(division.path[:])
+			division.total_distance = node_distance(graph, division.province, next)
 		}
 	}
 
 	if !slice.is_empty(division.path[:]) do division_advance(division, game.province_graph, delta_time)
 
-	exit: if button_just_pressed(game, MouseButton.LEFT)
+	exit: if is_button_just_pressed(game, MouseButton.LEFT)
 	{
 		if game.selected_province == 0 do break exit
 
@@ -339,7 +346,7 @@ division_update :: proc(division: ^Division, game: ^GameState, delta_time: f32)
 
 		division.distance_traveled = 0
 		next := slice.first(division.path[:])
-		division.total_distance = province_distance(game.province_graph, division.province, next)
+		division.total_distance = node_distance(game.province_graph, division.province, next)
 	}
 }
 
@@ -356,15 +363,15 @@ camera_update :: proc(using game: ^GameState, delta_time: f32)
 		cam.zoom = clamp(cam.zoom, 1, 10)
 	}
 
-	if button_pressed(game, MouseButton.MIDDLE) do cam.pos -= mouse_delta / cam.zoom
+	if is_button_pressed(game, MouseButton.MIDDLE) do cam.pos -= mouse_delta / cam.zoom
 
 	if mouse_scroll != 0 do zoom(&cam, mouse_scroll, mouse_pos)
 
 	CAM_SPEED :: 350
-	if button_pressed(game, Key.UP)    do cam.pos.y -= CAM_SPEED * delta_time / cam.zoom
-	if button_pressed(game, Key.DOWN)  do cam.pos.y += CAM_SPEED * delta_time / cam.zoom
-	if button_pressed(game, Key.LEFT)  do cam.pos.x -= CAM_SPEED * delta_time / cam.zoom
-	if button_pressed(game, Key.RIGHT) do cam.pos.x += CAM_SPEED * delta_time / cam.zoom
+	if is_button_pressed(game, Key.UP)    do cam.pos.y -= CAM_SPEED * delta_time / cam.zoom
+	if is_button_pressed(game, Key.DOWN)  do cam.pos.y += CAM_SPEED * delta_time / cam.zoom
+	if is_button_pressed(game, Key.LEFT)  do cam.pos.x -= CAM_SPEED * delta_time / cam.zoom
+	if is_button_pressed(game, Key.RIGHT) do cam.pos.x += CAM_SPEED * delta_time / cam.zoom
 }
 
 json_array_to_vec2 :: proc(array: json.Array) -> [2]f32
@@ -385,25 +392,51 @@ game_render :: proc(renderer: ^sdl3.Renderer, game: ^GameState, map_tex: ^sdl3.T
 	// Render map
 	map_screen_rect := rect_world_to_screen(game.map_rect, &game.cam)
 	map_screen_rect = rect_floor(map_screen_rect)
-	// TODO(pol): Should be tiled using sdl3.RenderTextureTiled
 	sdl3.RenderTexture(renderer, map_tex, nil, (^sdl3.FRect)(&map_screen_rect))
 
-	// render_graph(renderer, cam, centers, graph, pcolors)
+	occupied_provinces := make(map[int]int)
+	defer delete(occupied_provinces)
 
 	// Render division
 	DIVISION_SIZE :: [2]f32{5, 5}
 	for d in game.divisions
 	{
+		priority, ok := occupied_provinces[d.province]
+		if !ok
+		{
+			occupied_provinces[d.province] = 0
+			priority = 0
+		}
+
+		occupied_provinces[d.province] += 1
+
 		sdl3.SetRenderDrawColor(renderer, d.color.r, d.color.g, d.color.g, sdl3.ALPHA_OPAQUE)
 		division_rect := Rect{game.province_graph[d.province].center_pos, DIVISION_SIZE}
-		division_screen_rect := rect_world_to_screen(division_rect, &game.cam)
-		sdl3.RenderFillRect(renderer, (^sdl3.FRect)(&division_screen_rect))
+		if priority > 0 && slice.is_empty(d.path[:])
+		{
+			division_rect.pos.y += f32(priority) * DIVISION_SIZE.y * 1.1
+		}
+
 
 		if !slice.is_empty(d.path[:])
 		{
 			start := vec2_world_to_screen(game.province_graph[d.province].center_pos, &game.cam)
 			end := vec2_world_to_screen(game.province_graph[slice.first(d.path[:])].center_pos, &game.cam)
+
+			// Vector from start to end
+			delta := game.province_graph[slice.first(d.path[:])].center_pos - game.province_graph[d.province].center_pos
+			division_rect.pos += (d.distance_traveled/d.total_distance) * delta
+
+			division_screen_rect := rect_world_to_screen(division_rect, &game.cam)
+
+			sdl3.RenderFillRect(renderer, (^sdl3.FRect)(&division_screen_rect))
+
 			sdl3.RenderLine(renderer, start.x, start.y, end.x, end.y)
+		}
+		else
+		{
+			division_screen_rect := rect_world_to_screen(division_rect, &game.cam)
+			sdl3.RenderFillRect(renderer, (^sdl3.FRect)(&division_screen_rect))
 		}
 	}
 }
@@ -413,7 +446,6 @@ rect_floor :: proc(rect: Rect) -> Rect
 	rect := rect
 	rect.pos = linalg.floor(rect.pos)
 	rect.size = linalg.floor(rect.size)
-
 	return rect
 }
 
@@ -440,7 +472,6 @@ rect_world_to_screen :: proc(rect: Rect, cam: ^Camera) -> Rect
 	rect := rect
 	rect.pos = vec2_world_to_screen(rect.pos, cam)
 	rect.size *= cam.zoom
-
 	return rect
 }
 
@@ -457,13 +488,20 @@ get_rgba32_surface_packed_rgb :: proc(surface: ^sdl3.Surface, pixel_pos: [2]i32)
 {
 	pixels := slice.bytes_from_ptr(surface.pixels, int(surface.h*surface.pitch))
 
-	if pixel_pos.x >= 0 && pixel_pos.x < surface.w && pixel_pos.y >= 0 && pixel_pos.y < surface.h
+	if pixel_pos.x < 0 && pixel_pos.x >= surface.w || pixel_pos.y < 0 || pixel_pos.y >= surface.h
 	{
-		i := pixel_pos.y*surface.pitch + pixel_pos.x * 4
-		return (^u32)(&pixels[i])^ & 0x00FFFFFF, true
+		return
 	}
 
-	return
+	i := pixel_pos.y*surface.pitch + pixel_pos.x * 4
+	pixel_color := [4]u8{
+		pixels[i],
+		pixels[i+1],
+		pixels[i+2],
+		0
+	}
+
+	return transmute(u32)pixel_color, true
 }
 
 json_load_from_file :: proc(file: string) -> (root: json.Value, ok: bool)
